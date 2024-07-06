@@ -1,0 +1,1255 @@
+---
+title: "Is Xtreme Gradient Boosting immune to multicollinearity? "
+subtitle: Sebastian Cabrera, Kristen Allen, Kamel Yousri Amrouche
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    latex_engine: xelatex
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r Install and load packages, echo=FALSE, include=FALSE}
+
+outputDIR <- 'Results_lr/'
+if (!dir.exists(outputDIR)) {dir.create(outputDIR)}
+
+outputDIR <- 'Results_tree/'
+if (!dir.exists(outputDIR)) {dir.create(outputDIR)}
+
+outputDIR <- 'Results_xgb/'
+if (!dir.exists(outputDIR)) {dir.create(outputDIR)}
+
+foo <- function(x){
+  for(i in x){
+    #  Returns true if it was possible to load the package
+    if(!require(i,character.only = TRUE)){
+      #  If the package was not loaded, then we proceed to the installation
+      install.packages(i,dependencies = TRUE)
+      #  Load the package after the installation
+      require( i , character.only = TRUE )
+    }
+  }
+}
+
+#  Load packages:
+
+foo(c("ggplot2",
+      "dplyr",
+      "rpart",
+      "pROC",
+      "caret",
+      "randomForest",
+      "xgboost",
+      "MASS",
+      "MLmetrics",
+      "kableExtra",
+      "ggridges",
+      "grid",
+      "gridExtra"
+))
+
+# webshot2::install_phantomjs()
+devtools::install_github("kupietz/kableExtra")
+library(kableExtra)
+```
+# Abstract 
+The purpose of this report is to introduce the main results and insights found after investigating the effects of multicollinearity on different supervised learning methods. More specifically, we focused our attention on analyzing conventional performance metrics for extreme gradient boosting, classification trees, and logistic regression under different assumptions. We found the performance of the extreme gradient boosting doesn’t decrease under increasing levels of multicollinearity, compared to logistic regression in which we found a significant decrease in performance. For example, increasing the number of correlated variables, from 10 to 300 meant a decrease the average area under the curve of 0.79 to 0.63 for Logistic Regression while under the same data the extreme gradient boosting performance changes from 0.750 to 0.7598. 
+
+# 1. Introduction 
+On a daily basis, classification models are used to support decision making, as they allow analysts to identify patterns and categorize data into different groups based on a specific set of features. The most commonly used models are Logistic regression, Decision trees, Random forest, Support vector machine, K nearest neighbor and different types of boosting. Among these methods, we highlight Xtreme Gradient Boosting, a method that outperforms traditional statistical methods, such as logistic regression, in diverse fields that range from medical to banking applications $^{1}$$^{2}$$^{3}$ . One of the reasons why it is thought that the performance of the model exceeds the performance of traditional methods, is robustness to multicollinearity. Motivated by this common assumption, in this project, we will focus our attention on testing the performance of the Extreme Gradient Boosting algorithm against 2 traditional methods commonly used, Logistic Regression and Classification trees. The remainder of this article is organized as follows. Section 2 presents related work that has been done to test multicollinearity on machine learning models. Section 3 presents the steps we used to prepare the data, and the experiments design. Section 4 describes statistics and insights found in the experiments. Finally, Section 5 concludes the research paper and outlines directions for future work. 
+
+# 2. Related work 
+In this section, we were interested in reviewing existing literature to see how correlated variables influence the models we selected.  As the main question focus on assesing the performance of the Extreme Gradient Boosting algorithm against 2 traditional methods commonly used Logistic Regression and Classification trees ybder increasing levels of multicollinearity, we researched papers, that studied the effects of multicollinearity on these machine learning models.
+
+A paper titled “A study of Effects of MultiCollinearity in the Multivariable Analysis”$^{4}$ found that regression model performance is not stable when the correlation coefficient of correlated variables increases. In this study, datasets were generated containing 2 correlated variables and 1 variable that was not correlated. Correlation coefficients were set ranging from -1 to 1 in increments of 0.05. The authors found that as the absolute value of the correlation coefficient increased, the regression coefficient for the correlated variables increase and their confidence intervals increase. When the correlation coefficient was set to around 0.9 or -0.9 the regression coefficient began a steep increase, from 3.8 and -1.4 respectively, to 29.7 and -27.4 when the correlation coefficient was set to 1 and -1. Implementing a regression model with correlation coefficients between variables in the range of 0.9 to 1 would cause any small change in the correlated variable to have a large effect on the prediction that was disproportionate to the actual level of correlation. As a result, the regression model errors would increase dramatically with this level of correlation. 
+
+It is postulated that Extreme gradient boosting is immune to the effects of variable collinearity. An article titled “Correlation in XGBoost” explores this question$^{5}$. The author begins with a dataset of 30 features with no correlated variables and incrementally adds variables with levels of correlation between 0.8 and 1. First, 1 variable was added which was perfectly correlated with the most important variable. This addition had no effect on the model performance or variable importance. Next, 4 variables were added with a correlation in the range of 0.97 to 0.98 to the top 4 most important original variables. This had the effect of changing the variable importance. However, there was only a minimal change in the AUC. The findings of this experiment are consistent with the theory that XGBoost performance maintains its performance with the presence of multicollinearity in the dataset. In our simulation reported below, we performed a similar test using different parameters to demonstrate how XGBoost can outperform other models like regression on datasets with collinearity. 
+
+# 3. Experiments design 
+In this section, we present the process used to generate the data, and train the machine learning models. For completeness, Section 3.1 describes the data generation process. Section 3.2 defines the set of parameters tested via a Montecarlo simulation. Finally, Section 3.3 describes the training procedure for the extreme gradient boosting and the other machine learning models considered in the paper.
+
+## 3.1. Dataset generation 
+To generate the data, we follow a specific procedure. Firstly, we generate $X_n$ number of correlated features, each of size $S$, with the degree of correlation determined by the parameter Corr_degree. Simultaneously, we generate $Z_n$ number of uncorrelated features, also of size $S$, with a correlated degree ranging from 0 to 0.1, following a uniform random distribution. Next, the target variable $Y$ is created as the normalized sum of $X_1$ and $Z_1$. If this sum exceeds 0.5, we assign the label 1; otherwise, it is marked as 0. To ensure the target variable $Y$ is not solely determined by specific features during model training, we remove $X_1$ and $Z_1$ from the dataset after creating $Y$. Figure 1 shows the process used to generate the data. 
+
+<center>
+
+![Dataset Generation process](Dataset_generation_process.png)
+
+</center>
+
+```{r, include=FALSE,echo=FALSE, fig.height = 4, fig.width = 12, fig.align = "center"}
+knitr::include_graphics("Dataset_generation_process.png")
+
+#<center>
+
+#![Dataset Generation process](Dataset_generation_process.png)
+
+#</center>
+```
+
+```{r, include=FALSE}
+
+# Generate Correlated dataframe 
+
+gen_corr_df <- function(data_seed,pcorrelated,pirrelevant,n_sample,corr_degree){
+  
+  set.seed(data_seed)
+  
+  pinfo=pcorrelated+1
+  pnoise=pirrelevant+1
+  
+  Sigma=matrix(corr_degree,pinfo,pinfo) 
+  diag(Sigma)=1
+  
+  Z=as.data.frame(mvrnorm(n_sample,rep(0,pinfo),Sigma))
+  
+  if(pinfo>1){
+    for (i in seq(2,pinfo)){
+      colnames(Z)[i]=paste0('Correlated_',i-1)
+    }
+  }
+  
+  Sigma2=matrix(runif(n=1, min=0, max=0.1),pnoise,pnoise) 
+  diag(Sigma2)=1
+  
+  X=as.data.frame(mvrnorm(n_sample,rep(0,pnoise),Sigma2))
+  
+  if(pnoise>1){
+    for (j in seq(2,pnoise)){
+      colnames(X)[j]=paste0('Noise_',j-1)
+    }
+  }
+  
+  Y=as.data.frame(rbinom(n_sample, size=1, prob=0.5))
+  colnames(Y)[1]='Target'
+  
+  data=cbind(Y,Z,X)
+  
+  colnames(data)[2]='Z1'
+  colnames(data)[2+pinfo]='X1'
+  
+  data2=data
+  data2$Z1X1=data$Z1+data$X1
+  data2$Z1X1_n=(data2$Z1X1-min(data2$Z1X1))/(max(data2$Z1X1)-min(data2$Z1X1))
+  
+  data$Target=ifelse(data2$Z1X1_n > 0.5, 1,0)
+  
+  #data=data[,-c('Z1','X1')]
+  data=subset(data, select=-c(Z1,X1))
+  
+  return(data)
+  
+}
+
+gen_corr_df(data_seed=1234,pcorrelated=4,
+            pirrelevant=2,n_sample=10,corr_degree=0.5)
+
+#seeds=seq(1200,1300)
+#correlated_variables=c(10,50,100)
+#noise_variables=c(10,20,50)
+#size_variables=c(1000,10000)
+#corr_degree=c(0.05,0.5,0.9)
+
+```
+This function to generate the data takes as parameters the seed, the number of correlated features, the number of uncorrelated features, the sample size, and the correlation degree. Take for example the generated data for seed 1234, with 2 correlated features and 2 uncorrelated features, the correlation degree for the correlated features was set to 0.9.
+```{r, include=FALSE}
+print(gen_corr_df)
+```
+```{r}
+
+table1=head(gen_corr_df(data_seed=1234,pcorrelated=2,
+            pirrelevant=2,n_sample=10,corr_degree=0.9))
+
+kbl(table1,digits=2,position = "!ht",
+    caption = "Example of generated data: ") %>%
+    kable_styling(#bootstrap_options = "striped", 
+                  full_width = F, position = "center")
+
+```
+
+```{r, include=FALSE}
+#We also check to confirm that the samples have a good balance of positive and negative cases.
+
+check_balance2<-function(df,Target){
+  n_pos<-sum(df$Target == 1, na.rm=TRUE)
+  n_neg<-sum(df$Target == 0, na.rm=TRUE)
+  nrows<-nrow(df)
+  perc_pos<-n_pos/nrows
+  perc_neg<-n_neg/nrows
+  df_balance<-data.frame(perc_pos,perc_neg)
+  return(df_balance)
+}
+check_balance2(table1,Target)
+```
+The cor function displays the Pearson correlation coefficient between 2 variables. It reveals that the linear correlation between the correlated variables is greater than 0.9, which is highly correlated, while the correlation between the uncorrelated variables is 0.37, closer to 0, indicating low correlation.
+
+```{r}
+table2=cor(gen_corr_df(data_seed=1234,pcorrelated=2,
+            pirrelevant=2,n_sample=10,corr_degree=0.9))
+
+kbl(table2,digits=2,position = "!ht",
+    caption = "Correlation for generated data: ") %>%
+    kable_styling(#bootstrap_options = "striped", 
+                  full_width = F, position = "center")
+
+```
+
+```{r, include=FALSE}
+# split train - test 
+
+split_train_test <- function(dataframe,perc_train){
+  
+  set.seed(23905)
+  
+  trainIndex <- createDataPartition(dataframe$Target, p = perc_train, 
+                                    list = FALSE, 
+                                    times = 1)
+  
+  dfTrain <- dataframe[ trainIndex,]
+  dfTest  <- dataframe[-trainIndex,]
+  
+  return(list(dfTrain=dfTrain, dfTest=dfTest))
+}
+
+#View(split_train_test(gen_corr_df_2(pcorrelated=5,pirrelevant=5,n_sample=100),0.8)$dfTest)
+
+```
+
+## 3.2. Parameters to test 
+As mentioned in the introduction, the objective of the project is to test the performance of the Xtreme Gradient Boosting algorithm against traditional methods, while using data with different levels of multicollinearity. To generate the data with different levels of multicollinearity we considered 5 different parameters. The set of parameters that were used to assess the research question are the following: 
+
+$\text{1.  Correlation degree: degree of correlation between the correlated features } X_n$ 
+
+$\text{2.  } X_n: \text{number of correlated features }$
+
+$\text{3.  } Z_n: \text{number of uncorrelated features }$
+
+$\text{4.  } \text{S: data size, ex. 1000 will return 1000 rows data points for each variable }$
+
+$\text{5.  } \text{Seed: random seed to generate the data using multivariate normal distributions }$ 
+
+1. Increasing the $correlation$ $degree$, will induce an increase in the level of multicollinearity of the data, and thus we will be able to test if the performance of the Xgboost model increases/decreases/remains unchanged, and also compare against the traditional methods. We will assess 5 different levels of correlation: 0.05, 0.3, 0.5, 0.7 and 0.9
+
+2. We also investigated the effect of increasing the number of correlated variables $X_n$, by changing the number of correlated features in 5 different levels: 10, 50, 100, 200 and 300 
+
+3. Moreover we changed the uncorrelated variables $Z_n$, to assess if throwing noise variables to the model has an effect on the performance of the models under different levels of multicollinearity. We tested 10 and 50 uncorrelated variables.
+
+4. We only used 1000 as the sample size $S$, mainly to reduce the run time while still considering a large number of data points that allow us to make meaningful conclusions
+
+5. Changing the $Seed$, allows to test the same parameters many times, and thus examine the variability of the results under many tries, following the Montecarlo Simulation principle. We changed the seed 501 times from 1.000 till 1.500
+
+With the parameters mentioned in the above points, we tested a total of 50 different set of parameters, 500 times for each combination, with data sets of 1000 records. 3 models were run on the generated data set (extreme gradient boosting, classification tree and logistic regression), calculating 12 performance metrics in each run. The data set has a final length of 901.800 rows:
+
+$Seeds * Corrdegree * S * Z_n * X_n * 3 * 12 = 501 * 5 * 1 * 2 * 5 * 3 * 12 = 901.800$.
+```{r}
+# parameters
+seeds=seq(1000,1500)
+correlated_variables=c(10,50,100,200,300)
+noise_variables=c(10,50)
+size_variables=c(1000)
+corr_degree=c(0.05,0.3,0.5,0.7,0.9)
+
+table4 = data.frame(matrix(0, nrow = 5, ncol = 2))
+colnames(table4)=c('Parameters','Tested values')
+table4[1,1]='Seed'
+table4[2,1]='Correlated variables'
+table4[3,1]='Uncorrelated variables'
+table4[4,1]='Size varibles'
+table4[5,1]='Correlation degree'
+table4[1,2]='seq(1000,1500)'
+table4[2,2]='c(10,50,100,200,300)'
+table4[3,2]='c(10,50)'
+table4[4,2]='c(1000)'
+table4[5,2]='c(0.05,0.3,0.5,0.7,0.9)'
+
+kbl(table4,digits=2,position = "!ht",
+    caption = "Tested parameters: ") %>%
+    kable_styling(#bootstrap_options = "striped", 
+                  full_width = F, position = "center")
+
+```
+## 3.3. Machine learning models coding 
+In our data analysis and modeling approach, we chose to utilize a combination of Extreme Gradient Boosting, logistic regression, and classification tree models, each offering unique strengths suited for diverse datasets. The primary focus of our study is on Extreme Gradient Boosting, aimed at addressing the research question concerning its immunity to multicollinearity. To establish a solid baseline, we also employed logistic regression, a widely used classification model, enabling us to compare performance metrics and trends. This comparison proves to be invaluable, especially when evaluating Extreme Gradient Boosting predictive capabilities in the presence of multicollinearity, compared to other commonly used models. By incorporating Extreme Gradient Boosting, Logistic Regression, and Classification trees into our analysis, we conducted a thorough examination of our data. Leveraging the strengths of each model, we gained valuable insights, enabling us to make more confident and nuanced conclusions regarding the research question. 
+
+### 3.3.1  Extreme Gradient Boosting 
+The extreme gradient boosting model that we train takes the data generated in **3.1** and uses the following set of parameters to find the best model that fits the training data (80% of the data set). The parameters used are max depth = 10, number of rounds = 25, and error as the evaluation metric. Then after training the model, it applies the model to the remaining unseen 20% of the data frame, and calculates the following metrics: Area under the curve AUC, precision, recall, sensitivity, specificity and f1. The results are saved on a list, so that they are accessible after applying the function. 
+```{r}
+# Xgboost 
+
+apply_xgb <- function(data_seed,pcorrelated,pirrelevant,n_sample,corr_degree){
+  
+  result=split_train_test(gen_corr_df(data_seed=data_seed,
+                                      pcorrelated=pcorrelated,
+                                      pirrelevant=pirrelevant,
+                                      n_sample=n_sample,
+                                      corr_degree = corr_degree),
+                          perc_train=0.8)
+  
+  dfTrain=result$dfTrain
+  dfTest=result$dfTest
+  
+  X_train = data.matrix(dfTrain[,-1])                  
+  y_train = dfTrain[,1]                                
+  
+  X_test = data.matrix(dfTest[,-1])                    
+  y_test = dfTest[,1]   
+  
+  xgboost_train = xgb.DMatrix(data=X_train, label=y_train)
+  xgboost_test = xgb.DMatrix(data=X_test, label=y_test)
+  
+  model <- xgboost(data = xgboost_train,
+                   max.depth=10,                        
+                   nrounds=25,
+                   eval_metric = "error",
+                   verbose=0) 
+  
+  actual <-  dfTest$Target
+  
+  predicted <- predict(model, xgboost_test, type="response")
+  
+  auc=MLmetrics::AUC(predicted,actual)
+  prec_05=MLmetrics::Precision(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  rec_05=MLmetrics::Recall(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  f1_05=MLmetrics::F1_Score(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  sens_05=MLmetrics::Sensitivity(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  spec_05=MLmetrics::Specificity(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  
+  prec_09=MLmetrics::Precision(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  rec_09=MLmetrics::Recall(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  f1_09=MLmetrics::F1_Score(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  sens_09=MLmetrics::Sensitivity(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  spec_09=MLmetrics::Specificity(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  
+  
+  return(list(auc=auc, #prec_05=prec_05
+               prec_05=prec_05, rec_05=rec_05
+              , f1_05=f1_05, sens_05=sens_05
+              , spec_05=spec_05, prec_09=prec_09
+              , rec_09=rec_09, f1_09=f1_09
+              , sens_09=sens_09, spec_09=spec_09))
+
+}
+
+```
+The coded xgb function receives as parameters the necessary inputs to generate the data and returns the list of performance metrics on the training set. For example using seed 1234, 20 correlated variables, 10 uncorrelated variables, sample size 1000 and correlation degree for the correlated variables 0.8.
+
+As performance metrics, we have the AUC, precision, recall, f1, sensitivity, and specificity. Since this model outputs the probabilities of each record being classified as positive, and to calculate our performance metrics a binary classification is required, we converted the probabilities given by the model to binary and calculated the performance metrics for 2 different thresholds of probability. For the first threshold, if the probability of records being classified as positive was >=50%, then it was classified as positive, else negative. For the second threshold, if the probability of records being classified as positive was >=90%, then it was classified as positive, else negative.
+
+```{r}
+table3_xgb=as.data.frame(apply_xgb(data_seed=1234, pcorrelated=20, pirrelevant=10,
+n_sample=1000, corr_degree = 0.8))
+
+
+# ##previous way of displaying results
+# colnames(table3)=c('auc', #'prec_05'
+#                        'prec_05', 'rec_05'
+#                       , 'f1_05', 'sens_05'
+#                       , 'spec_05', 'prec_09'
+#                       , 'rec_09','f1_09'
+#                       , 'sens_09', 'spec_09')
+# 
+# kbl(table3,digits=2,position = "!ht",
+#     caption = "Example of applying the XGB function: ") %>%
+#     kable_styling(#bootstrap_options = "striped", 
+#                   full_width = F, position = "center")
+
+
+# new way to display results
+metrics<-function(df){
+  
+    results<-data.frame(
+    "Threshold"=c(NULL,"50%","90%"),
+    "AUC"=c(df[["auc"]],NULL,NULL),
+    "Precision"=c(NULL,df[["prec_05"]],df[["prec_09"]]),
+    "Recall"=c(NULL,df[["rec_05"]],df[["rec_09"]]),
+    "F1"=c(NULL, df[["f1_05"]], df[["f1_09"]]),
+    "Sensitivity"=c(NULL, df[["sens_05"]],df[["sens_09"]]),
+    "Specificity"=c(NULL,df[["spec_05"]], df[["spec_09"]]))
+    
+    return(results)
+}
+
+results<-metrics(table3_xgb)
+
+kbl(results,digits=2, position = "!ht",
+caption = "Example of applying the XGB function: ") %>%
+kable_styling(#bootstrap_options = "striped", 
+              full_width = F, position = "center")
+
+
+```
+### 3.3.2  Logistic Regression 
+The Logistic regression model that we train takes the data generated in **3.1** and uses the following set of parameters to find the best model that fits the training data (80% of the data set). Used logit as the link function. Then after training the model, it applies the model to the remaining unseen 20% of the data frame, and calculates the following metrics: Area under the curve AUC, precision, recall, sensitivity, specificity and f1. The results are saved on a list, so that they are accessible after applying the function. 
+```{r}
+# Logistic Regression 
+
+apply_lr <- function(data_seed,pcorrelated,pirrelevant,n_sample,corr_degree){
+  
+  result=split_train_test(gen_corr_df(data_seed=data_seed,
+                                      pcorrelated=pcorrelated,
+                                      pirrelevant=pirrelevant,
+                                      n_sample=n_sample,
+                                      corr_degree = corr_degree),perc_train=0.8)
+  
+  dfTrain=result$dfTrain
+  dfTest=result$dfTest
+  
+  model <- glm(Target ~.,family=binomial(link='logit'),data=dfTrain)
+  
+  actual <-  dfTest$Target
+    
+  predicted <- predict(model, dfTest, type="response")
+  
+  auc=MLmetrics::AUC(predicted,actual)
+  prec_05=MLmetrics::Precision(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  rec_05=MLmetrics::Recall(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  f1_05=MLmetrics::F1_Score(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  sens_05=MLmetrics::Sensitivity(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  spec_05=MLmetrics::Specificity(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  
+  prec_09=MLmetrics::Precision(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  rec_09=MLmetrics::Recall(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  f1_09=MLmetrics::F1_Score(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  sens_09=MLmetrics::Sensitivity(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  spec_09=MLmetrics::Specificity(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  
+  return(list(auc=auc, #prec_05=prec_05
+               prec_05=prec_05, rec_05=rec_05
+              , f1_05=f1_05, sens_05=sens_05
+              , spec_05=spec_05, prec_09=prec_09
+              , rec_09=rec_09, f1_09=f1_09
+              , sens_09=sens_09, spec_09=spec_09))
+}
+
+
+
+#apply_lr(result$dfTrain,result$dfTest)
+```
+The coded logistic regression function receives as parameters, the necessary inputs to generate the data, and returns the list of performance metrics on the training set. For example using seed 1234, 20 correlated variables, 10 uncorrelated variables, sample size 1000 and correlation degree for the correlated variables 0.8.
+
+```{r}
+table3_lr=as.data.frame(apply_lr(data_seed=1234, pcorrelated=20, pirrelevant=10,
+n_sample=1000, corr_degree = 0.8))
+
+#old way of displaying metrics
+# colnames(table3)=c('auc', #'prec_05'
+#                        'prec_05', 'rec_05'
+#                       , 'f1_05', 'sens_05'
+#                       , 'spec_05', 'prec_09'
+#                       , 'rec_09','f1_09'
+#                       , 'sens_09', 'spec_09')
+# 
+# kbl(table3,digits=2,position = "!ht",
+#     caption = "Example of applying the Logistic Regression function: ") %>%
+#     kable_styling(#bootstrap_options = "striped", 
+#                   full_width = F, position = "center")
+
+
+# new way to display results
+results<-metrics(table3_lr)
+kbl(results,digits=2, position = "!ht",
+caption = "Example of applying the Logistic Regression function: ") %>%
+kable_styling(#bootstrap_options = "striped", 
+              full_width = F, position = "center")
+
+```
+### 3.3.3 Classification Tree 
+The Classification tree model that we train takes the data generated in **3.1** and uses the following set of parameters to find the best model that fits the training data (80% of the data set). Used method = "class", and doesn't put a restriction on the depth of the tree. Then after training the model, it applies the model to the remaining unseen 20% of the data frame, and calculates the following metrics: Area under the curve AUC, precision, recall, sensitivity, specificity and f1. The results are saved on a list, so that they are accessible after applying the function. 
+```{r}
+
+apply_tree <- function(data_seed,pcorrelated,pirrelevant,n_sample,corr_degree){
+  
+  result=split_train_test(gen_corr_df(data_seed=data_seed,
+                                      pcorrelated=pcorrelated,
+                                      pirrelevant=pirrelevant,
+                                      n_sample=n_sample,
+                                      corr_degree = corr_degree),perc_train=0.8)
+  
+  dfTrain=result$dfTrain
+  dfTest=result$dfTest
+  
+  model <- rpart(Target ~.,method = "class", data = dfTrain)
+  
+  actual <-  dfTest$Target
+  
+  predicted <- predict(model, dfTest, type="prob")[,2]
+  
+  auc=MLmetrics::AUC(predicted,actual)
+  prec_05=MLmetrics::Precision(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  rec_05=MLmetrics::Recall(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  f1_05=MLmetrics::F1_Score(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  sens_05=MLmetrics::Sensitivity(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  spec_05=MLmetrics::Specificity(actual, ifelse(predicted >= .5, 1, 0), positive = 1)
+  
+  prec_09=MLmetrics::Precision(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  rec_09=MLmetrics::Recall(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  f1_09=MLmetrics::F1_Score(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  sens_09=MLmetrics::Sensitivity(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  spec_09=MLmetrics::Specificity(actual, ifelse(predicted >= .9, 1, 0), positive = 1)
+  
+  return(list(auc=auc, #prec_05=prec_05
+               prec_05=prec_05, rec_05=rec_05
+              , f1_05=f1_05, sens_05=sens_05
+              , spec_05=spec_05, prec_09=prec_09
+              , rec_09=rec_09, f1_09=f1_09
+              , sens_09=sens_09, spec_09=spec_09))
+}
+
+```
+The coded classification tree function receives as parameters, the necessary inputs to generate the data, and returns the list of performance metrics on the training set. For example using seed 1234, 20 correlated variables, 10 uncorrelated variables, sample size 1000 and correlation degree for the correlated variables 0.8.
+
+```{r}
+table3_ct=as.data.frame(apply_tree(data_seed=1234, pcorrelated=20, pirrelevant=10,
+n_sample=1000, corr_degree = 0.8))
+
+#old way of displaying metrics
+# colnames(table3)=c('auc', 'prec_05'
+#                       , 'prec_05', 'rec_05'
+#                       , 'f1_05', 'sens_05'
+#                       , 'spec_05', 'prec_09'
+#                       , 'rec_09','f1_09'
+#                       , 'sens_09', 'spec_09')
+# 
+# kbl(table3,digits=2,position = "!ht",
+#     caption = "Example of applying the classification tree function: ") %>%
+#     kable_styling(#bootstrap_options = "striped", 
+#                   full_width = F, position = "center")
+
+# new way to display results
+results<-metrics(table3_ct)
+kbl(results,digits=2, position = "!ht",
+caption = "Example of applying the classification tree function: ") %>%
+kable_styling(#bootstrap_options = "striped", 
+              full_width = F, position = "center")
+```
+
+# 4. Results and Insights 
+In this section, we present the experiments that we performed using the defined set of parameters of section 3.2. Our goal is to analyze the performance of the Extreme gradient boosting algorithm in the presence of increasing levels of multicollinearity. In addition, we describe the performance of two additional models, logistic regression and classification trees which are also commonly used in classification tasks. The experiments were performed on an Intel core i3 - 1.19 GHz with 12GB of RAM. 
+
+Due to the amount of parameters to be tested, and the 500 replicates for each set of parameters, we saved each run on .txt files inside the folders Results_lr/, Results_tree/ and Results_xgb/ and once is finished, we load all the .txt files and merge them in just one data set Induced by this procedure we were able to test 50 combinations of parameters, 500 times for each of the 3 machine learning models. 
+
+For completeness, Section 4.1 describes the results and insights for the Extreme gradient boosting algorithm. Section 4.2 presents the results for Logistic regression. Section 4.3 discusses the results for the classification tree. Finally, Section 4.4 compares the model's performance, and presents insights from the simulation results 
+
+It was found that increasing the number of non correlated features from 10 to 50 had minimal impact on the performance of the models so no further analysis will be conducted on this variable.
+When the threshold of what is classified as a positive case by the model is set to 0.5, the f1, precision, recall, sensitivity, and specificity all sit at an average close to 0.6. When the threshold of what is classified as a positive case is raised to 0.9, then these metrics have a higher deviation. The precision remains near 0.6, f1, recall, and sensitivity, all drop to an average of approximately 0.2, and the specificity raises to an average of approximately 0.9. In choosing the threshold, the business context should be considered in order to identify which metrics should be prioritized. 
+
+```{r , include=FALSE, eval=FALSE}
+# Create folders ----
+
+outputDIR <- 'Results_lr/'
+if (!dir.exists(outputDIR)) {dir.create(outputDIR)}
+
+outputDIR <- 'Results_tree/'
+if (!dir.exists(outputDIR)) {dir.create(outputDIR)}
+
+outputDIR <- 'Results_xgb/'
+if (!dir.exists(outputDIR)) {dir.create(outputDIR)}
+```
+## 4.1 Xgboost 
+In this section, we focused our attention on analyzing conventional performance metrics for extreme gradient boosting, under different parameters. First, we investigated one of the most commonly used metrics to assess model performance, the Area under the curve (AUC). In the following boxplot, we can see that the AUC for the Xgboost model, doesn't change drastically by increasing the number of correlated features, thus increasing levels of multicollinearity doesn't seem to affect the model. We highlighted in blue the model using a low degree of correlation between the different features (0.1), and in purple high degree of correlation (0.9), they follow the same constant trend. For example in the Area under the curve plot, we can see that changing from 10 correlated variables to 300 doesn't change significantly the metric value. 
+
+```{r, echo=FALSE, fig.height = 4, fig.width = 12, fig.align = "center"}
+
+final_results <- read.csv("final_results_07_11_2023_run.csv")
+
+final_results <- subset(final_results,final_results$Model=='Xgb')
+
+final_results$Value=as.numeric(final_results$Value)
+
+final_results_plot=final_results[,c("Model","pcorrelated",
+                                    "pirrelevant",
+                 "Value","n_sample","Metric",'corr_degree')]
+
+plt_1=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='auc'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#CC79A7","grey","grey", "grey","#0072B2")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Area under the curve", x = "Number of Correlated features")+
+  ggtitle("Xgboost - AUC perfomance")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+plt_2=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='f1_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#CC79A7","grey","grey", "grey","#0072B2")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "F1-score", x = "Number of Correlated features")+
+  ggtitle("Xgboost - F1-score")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+grid.arrange(plt_1, plt_2, ncol = 2, nrow = 1)
+```
+
+Moreover, we investigated two additional commonly used metrics to assess model performance, the precision and the recall, under a specific threshold (0.9). In the following box plots we can see that the Precision for low correlation values has a higher deviation. On the other hand, for recall, higher deviation in the metric is observed with higher correlation degree. We highlighted in blue the model performance using a low degree of correlation between the different features (0.1), and a high degree of correlation (0.9), and they follow the same constant trend. This further supports the claim that Extreme gradient boosting is immune to multicollinearity, as performance measure by recall and precision doesn't change under increasing number of correlated features. For example, under different correlation degrees , the mean value of recall and F1 score stay close to 0.25 and 0.42 respectively.
+
+```{r, echo=FALSE, fig.height = 4, fig.width = 12, fig.align = "center"}
+
+plt_3=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='prec_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#228B22","grey","grey", "grey","#FFA500")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Precision", x = "Number of Correlated features")+
+  ggtitle("Xgboost - Precision")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+plt_4=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='rec_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#228B22","grey","grey", "grey","#FFA500")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Recall", x = "Number of Correlated features")+
+  ggtitle("Xgboost - Recall ")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+grid.arrange(plt_3, plt_4, ncol = 2, nrow = 1)
+
+```
+
+
+```{r , include=FALSE, eval=FALSE}
+
+# Run this code to generate the xgboost results for the selected parameters.
+# Ensure that the following folder is empty and created in the working directory /Results_xgb/
+
+count=1
+# change seed
+for ( w in seeds){
+  # number of correlated variables
+  for ( i in correlated_variables){ 
+    # number of noise variables
+    for ( j in noise_variables){  
+      # size of dataframe
+      for ( k in size_variables){  
+        # correlation degree
+        for ( z in corr_degree){  
+          
+          write.table(cbind(data.frame(w,i,j,k,z),
+                            apply_xgb(w,
+                                i,
+                                j,
+                                k,
+                                z)),
+                      paste0("Results_xgb/xgb_results_",count,".txt"), 
+                      sep=";",
+                      col.names = FALSE,
+                      row.names = FALSE)
+          
+          count=count+1
+          print(count)
+        }
+      }
+    }
+  }
+}
+
+directory = "Results_xgb/"
+files_names <- list.files(directory,pattern=".txt")
+library(readr)
+results = data.frame(matrix(0, nrow = 1, ncol = 17))
+
+for (x in files_names) {
+  
+  # Remove the .txt extension from the filename to get the table name
+  
+  table_name = gsub(".txt","",x) 
+  df <- read_delim(paste0(directory,x),delim = ";", escape_double = FALSE, col_names = FALSE, trim_ws = TRUE,show_col_types = FALSE)
+  results <- rbind(results,df)
+
+}
+
+results=results[2:nrow(results),]
+colnames(results) = c('data_seed','pcorrelated','pirrelevant','n_sample','corr_degree',
+                      'auc', 'prec_05'
+                      , 'prec_05', 'rec_05'
+                      , 'f1_05', 'sens_05'
+                      , 'spec_05', 'prec_09'
+                      , 'rec_09','f1_09'
+                      , 'sens_09', 'spec_09')
+
+write.csv(results,
+          file='xgb_results.csv', row.names=FALSE)
+
+results_tr=results %>% 
+  tidyr::pivot_longer(
+    cols = c('auc', 'prec_05'
+             , 'prec_05', 'rec_05'
+             , 'f1_05', 'sens_05'
+             , 'spec_05', 'prec_09'
+             , 'rec_09','f1_09'
+             , 'sens_09', 'spec_09'), 
+    names_to = "Metric", 
+    values_to = "Value", 
+    names_prefix = "Metric_")
+
+ggplot(subset(results_tr,
+              results_tr$Metric=='auc'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(n_sample))) + 
+  geom_boxplot()+
+  facet_wrap(~corr_degree, scale="free")+
+  labs(y= "Area under the curve", x = "Number of Correlated features")+
+  ggtitle("AUC perfomance comparison under different sample sizes, and levels of correlation")+
+  guides(fill=guide_legend(title="Sample size"))
+
+results_tr$Model='Xgb'
+results_xgb=results_tr
+View(results_xgb)
+
+write.csv(results_xgb,
+          file='xgb_results_pivot.csv', row.names=FALSE)
+
+```
+
+## 4.2 Logistic Regression
+On this section we focused our attention on analyzing conventional performance metrics for Logistic Regression, under different parameters. First we investigated one of the most commonly used metrics to assess model performance, the Area under the curve (AUC). In the following boxplot we can see that the AUC for the Logistic model, does change drastically by increasing the number of correlated features, thus increasing levels of multicollinearity seems to affect the model performance, as multicollinearity increases the area under the curve decreases. We highlighted in blue the model performance using a low degree of correlation between the different features (0.1), and a high degree of correlation (0.9), as the number of correlated features increases the area under the curve seems to drop. For example for the blue boxes, we can see a drop from a mean value of 0.8 to aprox 0.65, changing from 10 correlated features to 300.
+
+```{r, echo=FALSE, fig.height = 4, fig.width = 12, fig.align = "center"}
+
+final_results <- read.csv("final_results_07_11_2023_run.csv")
+
+final_results <- subset(final_results,final_results$Model=='Lr')
+
+final_results$Value=as.numeric(final_results$Value)
+
+final_results_plot=final_results[,c("Model","pcorrelated",
+                                    "pirrelevant",
+                 "Value","n_sample","Metric",'corr_degree')]
+
+plt_1=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='auc'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#CC79A7","grey","grey", "grey","#0072B2")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Area under the curve", x = "Number of Correlated features")+
+  ggtitle("Logistic Regression - AUC perfomance")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+plt_2=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='f1_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#CC79A7","grey","grey", "grey","#0072B2")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "F1-score", x = "Number of Correlated features")+
+  ggtitle("Logistic Regression - F1-score")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+grid.arrange(plt_1, plt_2, ncol = 2, nrow = 1)
+
+```
+
+Furthermore, we investigated two additional commonly used metrics to assess model performance, the precision and the recall, under a specific threshold (0.9). In the following box plots we can see that the Precision for low correlation values has a higher deviation, and seems to decrease with increasing number of correlated variables. On the other hand, Recall increases with higher correlation degree, and higher number of correlated variables. Thus using if we used a 0.9 threshold in logistic regression under high correlated features, we would expect a model that would have a good recall but a bad precision. We highlighted in green the model performance using a low degree of correlation between the different features (0.1), and in orange the high degree of correlation (0.9), and they clearly exhibit a diverging trend.
+
+```{r, echo=FALSE, fig.height = 4, fig.width = 12, fig.align = "center"}
+plt_3=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='prec_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#228B22","grey","grey", "grey","#FFA500")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Precision", x = "Number of Correlated features")+
+  ggtitle("Logistic Regression - Precision")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+plt_4=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='rec_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#228B22","grey","grey", "grey","#FFA500")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Recall", x = "Number of Correlated features")+
+  ggtitle("Logistic Regression - Recall ")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+grid.arrange(plt_3, plt_4, ncol = 2, nrow = 1)
+
+```
+
+
+```{r , include=FALSE, eval=FALSE}
+
+# Run this code to generate the Logistic regression results for the selected parameters.
+# Ensure that the following folder is empty and created in the working directory /Results_lr/
+
+count=1
+# change seed
+for ( w in seeds){
+  # number of correlated variables
+  for ( i in correlated_variables){ 
+    # number of noise variables
+    for ( j in noise_variables){  
+      # size of dataframe
+      for ( k in size_variables){  
+        # correlation degree
+        for ( z in corr_degree){  
+          
+          write.table(cbind(data.frame(w,i,j,k,z),
+                            apply_lr(w,
+                                      i,
+                                      j,
+                                      k,
+                                      z)),
+                      paste0("Results_lr/lr_results_",count,".txt"), 
+                      sep=";",
+                      col.names = FALSE,
+                      row.names = FALSE)
+          
+          count=count+1
+          print(count)
+        }
+      }
+    }
+  }
+}
+
+directory = "Results_lr/"
+files_names <- list.files(directory,pattern=".txt")
+library(readr)
+results = data.frame(matrix(0, nrow = 1, ncol = 17))
+
+for (x in files_names) {
+  
+  # Remove the .txt extension from the filename to get the table name
+  
+  table_name = gsub(".txt","",x) 
+  df <- read_delim(paste0(directory,x),delim = ";", escape_double = FALSE, col_names = FALSE, trim_ws = TRUE,show_col_types = FALSE)
+  results <- rbind(results,df)
+  
+}
+
+results=results[2:nrow(results),]
+colnames(results) = c('data_seed','pcorrelated','pirrelevant','n_sample','corr_degree',
+                      'auc', 'prec_05'
+                      , 'prec_05', 'rec_05'
+                      , 'f1_05', 'sens_05'
+                      , 'spec_05', 'prec_09'
+                      , 'rec_09','f1_09'
+                      , 'sens_09', 'spec_09')
+
+write.csv(results,
+          file='lr_results.csv', row.names=FALSE)
+
+results_tr=results %>% 
+  tidyr::pivot_longer(
+    cols = c('auc', 'prec_05'
+             , 'prec_05', 'rec_05'
+             , 'f1_05', 'sens_05'
+             , 'spec_05', 'prec_09'
+             , 'rec_09','f1_09'
+             , 'sens_09', 'spec_09'), 
+    names_to = "Metric", 
+    values_to = "Value", 
+    names_prefix = "Metric_")
+
+ggplot(subset(results_tr,
+              results_tr$Metric=='auc'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(n_sample))) + 
+  geom_boxplot()+
+  facet_wrap(~corr_degree, scale="free")+
+  labs(y= "Area under the curve", x = "Number of Correlated features")+
+  ggtitle("AUC perfomance comparison under different sample sizes, and levels of correlation")+
+  guides(fill=guide_legend(title="Sample size"))
+
+results_tr$Model='Lr'
+results_lr=results_tr
+View(results_lr)
+
+write.csv(results_lr,
+          file='lr_results_pivot.csv', row.names=FALSE)
+
+```
+## 4.3 Tree 
+On this section we focused our attention on analyzing conventional performance metrics for Classification trees, under different parameters. We investigated one of the most commonly used metrics to assess model performance, the Area under the curve (AUC). In the following boxplot we can see that the AUC for the Logistic model, doesn't change drastically by increasing the number of correlated features, similar as what we highlighted in the 4.1 Extreme Gradient Boosting section, thus increasing levels of multicollinearity doesn't seem to affect the model performance. We highlighted in blue the model performance using a low degree of correlation between the different features (0.1), and in purple high degree of correlation (0.9). However, we notice that the deviation of the F1 score gets bigger with the increase of the correlation degrees.
+
+```{r, echo=FALSE, fig.height = 4, fig.width = 12, fig.align = "center"}
+
+final_results <- read.csv("final_results_07_11_2023_run.csv")
+
+final_results <- subset(final_results,final_results$Model=='Tree')
+
+final_results$Value=as.numeric(final_results$Value)
+
+final_results_plot=final_results[,c("Model","pcorrelated",
+                                    "pirrelevant",
+                 "Value","n_sample","Metric",'corr_degree')]
+
+plt_1=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='auc'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#CC79A7","grey","grey", "grey","#0072B2")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Area under the curve", x = "Number of Correlated features")+
+  ggtitle("Classification tree - AUC perfomance")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+plt_2=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='f1_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#CC79A7","grey","grey", "grey","#0072B2")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "F1-score", x = "Number of Correlated features")+
+  ggtitle("Classification tree - F1-score")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+grid.arrange(plt_1, plt_2, ncol = 2, nrow = 1)
+
+```
+```{r, include=FALSE, echo=FALSE, fig.height = 4, fig.width = 12, fig.align = "center"}
+
+#Second, we investigated two additional commonly used metrics to assess model performance, the precision and the #recall, under a specific threshold (0.9). We highlighted in green the model performance using a low degree of #correlation between the different features (0.1), and in orange the high degree of correlation (0.9). It seems that the classification tree, with increasing levels of correlation #and increasing amount of correlated variables have a lower recall for all levels, and also the deviation between #the results under correlation degree 0.9 is higher, so even if the AUC performance is stable, one should be #aware of using a 0.9 threshold as precision and recall under high correlation seems to vary in a high amount.
+
+plt_3=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='prec_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#228B22","grey","grey", "grey","#FFA500")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Precision", x = "Number of Correlated features")+
+  ggtitle("Classification tree - Precision")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+plt_4=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='rec_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("#228B22","grey","grey", "grey","#FFA500")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Recall", x = "Number of Correlated features")+
+  ggtitle("Classification tree - Recall ")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+grid.arrange(plt_3, plt_4, ncol = 2, nrow = 1)
+
+```
+
+```{r , include=FALSE, eval=FALSE}
+
+# Run this code to generate the Classification tree results for the selected parameters.
+# Ensure that the following folder is empty and created in the working directory /Results_tree/
+
+count=1
+# change seed
+for ( w in seeds){
+  # number of correlated variables
+  for ( i in correlated_variables){ 
+    # number of noise variables
+    for ( j in noise_variables){  
+      # size of dataframe
+      for ( k in size_variables){  
+        # correlation degree
+        for ( z in corr_degree){  
+          
+          write.table(cbind(data.frame(w,i,j,k,z),
+                            apply_tree(w,
+                                     i,
+                                     j,
+                                     k,
+                                     z)),
+                      paste0("Results_tree/tree_results_",count,".txt"), 
+                      sep=";",
+                      col.names = FALSE,
+                      row.names = FALSE)
+          
+          count=count+1
+          print(count)
+        }
+      }
+    }
+  }
+}
+
+directory = "Results_tree/"
+files_names <- list.files(directory,pattern=".txt")
+library(readr)
+results = data.frame(matrix(0, nrow = 1, ncol = 17))
+
+for (x in files_names) {
+  
+  # Remove the .txt extension from the filename to get the table name
+  
+  table_name = gsub(".txt","",x) 
+  df <- read_delim(paste0(directory,x),delim = ";", escape_double = FALSE, col_names = FALSE, trim_ws = TRUE,show_col_types = FALSE)
+  results <- rbind(results,df)
+  
+}
+
+results=results[2:nrow(results),]
+colnames(results) = c('data_seed','pcorrelated','pirrelevant','n_sample','corr_degree',
+                      'auc', 'prec_05'
+                      , 'prec_05', 'rec_05'
+                      , 'f1_05', 'sens_05'
+                      , 'spec_05', 'prec_09'
+                      , 'rec_09','f1_09'
+                      , 'sens_09', 'spec_09')
+
+write.csv(results,
+          file='tree_results.csv', row.names=FALSE)
+
+results_tr=results %>% 
+  tidyr::pivot_longer(
+    cols = c('auc', 'prec_05'
+             , 'prec_05', 'rec_05'
+             , 'f1_05', 'sens_05'
+             , 'spec_05', 'prec_09'
+             , 'rec_09','f1_09'
+             , 'sens_09', 'spec_09'), 
+    names_to = "Metric", 
+    values_to = "Value", 
+    names_prefix = "Metric_")
+
+ggplot(subset(results_tr,
+              results_tr$Metric=='auc'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(n_sample))) + 
+  geom_boxplot()+
+  facet_wrap(~corr_degree, scale="free")+
+  labs(y= "Area under the curve", x = "Number of Correlated features")+
+  ggtitle("AUC perfomance comparison under different sample sizes, and levels of correlation")+
+  guides(fill=guide_legend(title="Sample size"))
+
+results_tr$Model='Tree'
+results_tree=results_tr
+View(results_tree)
+
+write.csv(results_tree,
+          file='tree_results_pivot.csv', row.names=FALSE)
+```
+## 4.4 Model Comparison 
+One of the metrics that we used to test how the performance of the different models change under different levels of multicollinearity is the Area under the curve. We run the different models multiple times, under different random seed values and parameters, and we found that the Extreme Gradient Boosting performance seems to be stable under different levels of correlation and different amount of correlated variables, thus answering our research question. Interestly we found that this doesn't hold for the Logistic model, as we see that the performance of the model measured by the Area under the curve drops under a higher amount of correlated variables and a higher level of correlation between the correlated variables in the dataset. 
+
+```{r, echo=FALSE, fig.height = 4, fig.width = 12, fig.align = "center"}
+
+final_results <- read.csv("final_results_07_11_2023_run.csv")
+
+final_results <- subset(final_results,final_results$Model=='Xgb')
+
+final_results$Value=as.numeric(final_results$Value)
+
+final_results_plot=final_results[,c("Model","pcorrelated",
+                                    "pirrelevant",
+                 "Value","n_sample","Metric",'corr_degree')]
+
+plt_1=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='auc'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("grey","grey","grey", "grey","#0072B2")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Area under the curve", x = "Number of Correlated features")+
+  ggtitle("Xgboost  - AUC perfomance")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+final_results <- read.csv("final_results_07_11_2023_run.csv")
+
+final_results <- subset(final_results,final_results$Model=='Lr')
+
+final_results$Value=as.numeric(final_results$Value)
+
+final_results_plot=final_results[,c("Model","pcorrelated",
+                                    "pirrelevant",
+                 "Value","n_sample","Metric",'corr_degree')]
+
+plt_2=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='auc'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("grey","grey","grey", "grey","#FF0000")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "Area under the curve", x = "Number of Correlated features")+
+  ggtitle("Logistic Regression  - AUC perfomance")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+grid.arrange(plt_1, plt_2, ncol = 2, nrow = 1)
+
+```
+
+On the other hand, while investigating the f1-score which is other commonly used metric, we found that the best performing model under a 0.9 threshold is the logistic regression, as we see that the performance of the model measured by the f1-score increases under a higher amount of correlated variables, while the f1-score performance of the extreme gradient boosting remains constant. Thus the decrease in the Area under the curve for the logistic regression under increasing levels of multicollinearity is tied to a higher f1-score, and recalling the results found in section *4.2*, this is tied to increasing recall values and decreasing precision values. However, it is interesting to note that for XGBoost, the behavior of the same metric doesn't change, which supports the claim that is indeed inmune to multicollinearity.
+
+```{r, echo=FALSE, fig.height = 4, fig.width = 12, fig.align = "center"}
+
+final_results <- read.csv("final_results_07_11_2023_run.csv")
+
+final_results <- subset(final_results,final_results$Model=='Xgb')
+
+final_results$Value=as.numeric(final_results$Value)
+
+final_results_plot=final_results[,c("Model","pcorrelated",
+                                    "pirrelevant",
+                 "Value","n_sample","Metric",'corr_degree')]
+
+plt_1=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='f1_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("grey","grey","grey", "grey","#0072B2")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "F1-score", x = "Number of Correlated features")+
+  ggtitle("Xgboost  - F1-score (0.9 threshold)")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+final_results <- read.csv("final_results_07_11_2023_run.csv")
+
+final_results <- subset(final_results,final_results$Model=='Lr')
+
+final_results$Value=as.numeric(final_results$Value)
+
+final_results_plot=final_results[,c("Model","pcorrelated",
+                                    "pirrelevant",
+                 "Value","n_sample","Metric",'corr_degree')]
+
+plt_2=ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='f1_09'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  scale_fill_manual(values=c("grey","grey","grey", "grey","#FF0000")) +
+  scale_alpha_manual(values=c(1,0.1,0.1,0.1,1))+
+  facet_wrap(~Model)+
+  labs(y= "F1-score", x = "Number of Correlated features")+
+  ggtitle("Logistic Regression  - F1-score (0.9 threshold)")+
+  guides(fill=guide_legend(title="Correlation degree"))+
+  theme_light()+
+  theme(axis.text=element_text(size=10),axis.title=element_text(size=10,face="bold"),strip.text.x = element_text(size = 12),legend.title=element_text(size=10), 
+    legend.text=element_text(size=10))
+
+grid.arrange(plt_1, plt_2, ncol = 2, nrow = 1)
+
+```
+
+```{r , include=FALSE, eval=FALSE}
+
+# code to bind the results of each model
+
+final_results=rbind(results_xgb,results_lr,results_tree)
+
+summary(final_results)
+
+final_results$Value=as.numeric(final_results$Value)
+
+final_results_plot=final_results[,c("Model","pcorrelated",
+                                    "pirrelevant",
+                 "Value","n_sample","Metric",'corr_degree')]
+
+ggplot(subset(final_results_plot,
+              final_results_plot$Metric=='auc'),
+       aes(x=as.factor(pcorrelated), y=Value, 
+           fill=as.factor(corr_degree))) + 
+  geom_boxplot()+
+  facet_wrap(~Model)+
+  labs(y= "Area under the curve", x = "Number of Correlated features")+
+  ggtitle("Model AUC perfomance comparison under different levels of correlation")+
+  guides(fill=guide_legend(title="Correlation degree"))
+```
+# 5. Concluding Remarks 
+In this brief research paper, we provided an analysis of Extreme Gradient Boosting performance under different levels of multicollinearity, and also compared the model against other commonly used supervised learning models. 
+
+We examine 4 different performance metrics behavior, under increasing levels of correlation and increasing number of correlated variables: Area under the curve, F1-score, Precision and Recall. We found that the value of the 4 performance metrics for the extreme gradient boosting algorithm doesn't decrease under increasing amounts of correlated variables and increasing levels of correlation. Furthermore, we could even argue that the performance stays on the same level. Thus we conclude that the extreme gradient boosting algorithm is in fact immune to multicollinearity frm a performance perspective. 
+
+We also present our in-depth analysis that compares the extreme gradient boosting against other traditional machine learning methods. We found that the commonly used Logistic regression model for classification tasks is affected by the increasing levels of correlation. The performance measured by different metrics as Area under the curve, shows a tendency to deteriorate, and the loss is even bigger when the number of correlated variables increases. However is worth noticing that the logistic regression performance using a 0.9 threshold increases higher than the performance by the extreme gradient boosting under increasing levels of multicollinearity.
+
+In the near future, we expect to use these insights while facing decisions regarding the appropriate machine learning model to choose from in the presence of highly correlated features. We would discard logistic regression if the number of correlated variables is suspected to be high as not only inference may be affected but also performance.  
+
+ 
+# References 
+
+[1] Zhang, Z., Ho, K. M. & Hong, Y. Machine learning for the prediction of volume responsiveness in patients with oliguric acute kidney injury in critical care. Crit. Care. 23(1), 112 (2019). 
+
+[2] Chen, T. et al. Prediction and risk stratification of kidney outcomes in IgA nephropathy. Am. J. Kidney Dis. 74(3), 300–309 (2019). 
+
+[3] Hou, N. et al. Predicting 30-days mortality for MIMIC-III patients with sepsis-3: A machine learning approach using XGboost. J. Transl. Med. 18(1), 462 (2020). 
+
+[4] Wonsuk Yo. (2014) A Study of Effects of MultiCollinearity in the Multivariable Analysis.
+
+[5] Gupta, V. (2021) Correlation in xgboost, Medium. Available at: https://vishesh-gupta.medium.com/correlation-in-xgboost-8afa649bd066 (Accessed: 10 November 2023). 
